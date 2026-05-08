@@ -7,4 +7,4 @@
 <h3 align="left">Languages and Tools:</h3>
 
 
-![c](https://skillicons.dev/icons?i=c) ![go](https://skillicons.dev/icons?i=go) ![postgresql](https://skillicons.dev/icons?i=postgres)  
+<img src="https://skillicons.dev/icons?i=c" height="40"> <img src="https://skillicons.dev/icons?i=go" height="40"> <img src="https://skillicons.dev/icons?i=postgres" height="40"> <img src="https://raw.githubusercontent.com/ggml-org/llama.cpp/master/media/llama1-icon.svg" height="40">
