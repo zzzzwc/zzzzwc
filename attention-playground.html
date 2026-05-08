@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>Attention 交互计算实验室</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  background: #f5f7fb;
+  margin: 0; padding: 20px;
+  color: #1e293b;
+}
+h1 { margin: 0 0 4px; font-size: 22px; }
+.sub { color: #64748b; font-size: 13px; margin-bottom: 16px; }
+
+.section {
+  background: #fff;
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+}
+.section-title {
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-title .tag {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #475569;
+}
+.section-title .tag.standard { background: #dbeafe; color: #1e40af; }
+.section-title .tag.flash { background: #fef3c7; color: #92400e; }
+
+.row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.mat { display: inline-block; }
+.mat-title {
+  font-size: 12px;
+  color: #475569;
+  margin-bottom: 6px;
+  text-align: center;
+  font-family: "Times New Roman", serif;
+  min-height: 18px;
+}
+.grid {
+  display: grid;
+  gap: 2px;
+  background: #cbd5e1;
+  padding: 1px;
+  border-radius: 4px;
+}
+.cell {
+  width: 52px;
+  height: 32px;
+  background: #fff;
+  text-align: center;
+  line-height: 32px;
+  font-size: 12px;
+  font-family: "SF Mono", Consolas, monospace;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s, outline 0.12s;
+  outline: none;
+  border: none;
+  color: #0f172a;
+  padding: 0;
+}
+.cell:hover { filter: brightness(0.95); }
+
+input.cell {
+  cursor: text;
+  font-weight: 500;
+}
+input.cell:focus { outline: 2px solid #2563eb; outline-offset: -2px; }
+
+.cell.q  { background: #eff6ff; }
+.cell.k  { background: #ecfdf5; }
+.cell.v  { background: #fffbeb; }
+.cell.qkt { background: #faf5ff; }
+.cell.sm  { background: #fdf2f8; }
+.cell.out { background: #fef3c7; }
+.cell.scalar { background: #f3f4f6; }
+
+.cell.highlight-dep {
+  background: #fde68a !important;
+  box-shadow: inset 0 0 0 1px #f59e0b;
+}
+.cell.highlight-active {
+  background: #93c5fd !important;
+  outline: 2px solid #1d4ed8;
+  outline-offset: -2px;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.op {
+  display: flex;
+  align-items: center;
+  font-size: 16px;
+  color: #64748b;
+  padding: 0 2px;
+  margin-top: 24px;
+}
+
+.controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+button {
+  padding: 6px 14px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #1e293b;
+}
+button:hover { background: #f1f5f9; }
+button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+button.primary:hover { background: #1d4ed8; }
+
+.legend {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: #475569;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.legend-item { display: flex; align-items: center; gap: 4px; }
+.legend-swatch {
+  width: 14px; height: 14px;
+  border-radius: 3px;
+  display: inline-block;
+  border: 1px solid #cbd5e1;
+}
+
+.hint {
+  font-size: 12px;
+  color: #475569;
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-left: 3px solid #2563eb;
+  border-radius: 4px;
+}
+
+.selection-info {
+  font-size: 12px;
+  color: #1e40af;
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #eff6ff;
+  border-radius: 6px;
+  min-height: 34px;
+  font-family: "SF Mono", Consolas, monospace;
+}
+.selection-info .muted { color: #94a3b8; }
+</style>
+</head>
+<body>
+<h1>Attention 交互计算实验室</h1>
+<div class="sub">编辑 Q / K / V 任一格将实时重算下游。点击任意结果格，黄色高亮它递归依赖的全部数据；点空白清除。支持 Ctrl/Cmd + 点击多选叠加高亮。</div>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-swatch" style="background:#93c5fd"></span>选中</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#fde68a"></span>依赖</div>
+  <span style="color:#cbd5e1">|</span>
+  <div class="legend-item"><span class="legend-swatch" style="background:#eff6ff"></span>Q</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#ecfdf5"></span>K</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#fffbeb"></span>V</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#faf5ff"></span>Q·Kᵀ</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#fdf2f8"></span>softmax</div>
+  <div class="legend-item"><span class="legend-swatch" style="background:#fef3c7"></span>输出</div>
+</div>
+
+<div class="section">
+  <div class="section-title">输入 <span class="tag">Q / K / V 可编辑</span></div>
+  <div class="controls">
+    <button onclick="resetValues()">重置示例</button>
+    <button onclick="randomize()">随机生成</button>
+    <button class="primary" onclick="recompute()">重新计算</button>
+  </div>
+  <div class="row">
+    <div class="mat"><div class="mat-title">Q (4×4)</div><div id="mat-q" class="grid"></div></div>
+    <div class="mat"><div class="mat-title">K (4×4)</div><div id="mat-k" class="grid"></div></div>
+    <div class="mat"><div class="mat-title">V (4×4)</div><div id="mat-v" class="grid"></div></div>
+  </div>
+  <div class="hint">💡 直接在输入格中修改数值，失焦后自动重算。</div>
+  <div class="selection-info" id="sel-info"><span class="muted">未选中任何格子</span></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Standard Attention <span class="tag standard">4×4 完整计算</span></div>
+  <div class="row">
+    <div class="mat"><div class="mat-title">Q · Kᵀ</div><div id="mat-qkt" class="grid"></div></div>
+    <div class="op">→</div>
+    <div class="mat"><div class="mat-title">softmax(Q·Kᵀ)</div><div id="mat-sm" class="grid"></div></div>
+    <div class="op">· V →</div>
+    <div class="mat"><div class="mat-title">softmax(Q·Kᵀ) · V</div><div id="mat-out" class="grid"></div></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">FlashAttention 第一次内层迭代 O₁⁽¹⁾ <span class="tag flash">block 1：Q 前 2 行 × K/V 前 2 行</span></div>
+  <div class="row">
+    <div class="mat"><div class="mat-title">Q₁·K₁ᵀ (2×2)</div><div id="mat-fqkt" class="grid"></div></div>
+    <div class="op">→</div>
+    <div class="mat"><div class="mat-title">m⁽¹⁾</div><div id="mat-fm" class="grid"></div></div>
+    <div class="op"></div>
+    <div class="mat"><div class="mat-title">l⁽¹⁾</div><div id="mat-fl" class="grid"></div></div>
+    <div class="op">→</div>
+    <div class="mat"><div class="mat-title">局部 softmax</div><div id="mat-fsm" class="grid"></div></div>
+    <div class="op">· V₁ →</div>
+    <div class="mat"><div class="mat-title">O₁⁽¹⁾ (2×4)</div><div id="mat-fout" class="grid"></div></div>
+  </div>
+  <div class="hint">softmax 仅对 block 内 2 个值做局部归一化，m⁽¹⁾ / l⁽¹⁾ 是行最大与 exp 和，留给下一 block 做 α 修正。</div>
+</div>
+
+<div class="section">
+  <div class="section-title">FlashAttention 第二次内层迭代 O₁⁽²⁾ = O₁_final <span class="tag flash">block 2：Q 前 2 行 × K/V 后 2 行，合并得最终结果</span></div>
+  <div class="row">
+    <div class="mat"><div class="mat-title">Q₁·K₂ᵀ (2×2)</div><div id="mat-fqkt2" class="grid"></div></div>
+    <div class="op">→</div>
+    <div class="mat"><div class="mat-title">m⁽²⁾</div><div id="mat-fm2" class="grid"></div></div>
+    <div class="op"></div>
+    <div class="mat"><div class="mat-title">l⁽²⁾</div><div id="mat-fl2" class="grid"></div></div>
+    <div class="op">→</div>
+    <div class="mat"><div class="mat-title">P̃₂ = exp(S₂−m⁽²⁾)</div><div id="mat-fp2" class="grid"></div></div>
+    <div class="op">→</div>
+    <div class="mat"><div class="mat-title">O₁_final (2×4)</div><div id="mat-fout2" class="grid"></div></div>
+  </div>
+  <div class="hint">
+    m⁽²⁾ = max(m⁽¹⁾, rowmax(S₂))；l⁽²⁾ = e^(m⁽¹⁾−m⁽²⁾)·l⁽¹⁾ + Σ e^(S₂−m⁽²⁾)；<br>
+    O₁_final = diag(1/l⁽²⁾) · [ e^(m⁽¹⁾−m⁽²⁾)·l⁽¹⁾·O₁⁽¹⁾ + P̃₂·V₂ ]<br>
+    最终结果应与 Standard Attention 输出的前 2 行一致 ✓
+  </div>
+</div>
+
+<script>
+// =============== 数据 ===============
+const N = 4;
+const FB = 2;
+
+let Q = [[1,2,1,1],[2,2,1,1],[1,1,2,1],[1,2,1,1]];
+let K = [[1,1,1,1],[1,2,1,2],[1,1,1,1],[3,1,2,1]];
+let V = [[0.3,1,3,1],[1,2,1,2],[2,1,22,1],[1,5,1,1]];
+
+// id → { el, cls, deps: [id], editable, value, label }
+const cellMap = new Map();
+function cell(id) { return cellMap.get(id); }
+
+// =============== 格式化 ===============
+function fmt(v) {
+  if (!isFinite(v)) return "NaN";
+  if (Math.abs(v) < 1e-4) return "0";
+  const a = Math.abs(v);
+  if (a >= 1000) return v.toFixed(0);
+  if (a >= 100)  return v.toFixed(1);
+  if (a >= 10)   return v.toFixed(2);
+  return v.toFixed(2);
+}
+
+// =============== 构造 cell ===============
+function mkCell(gridId, id, cls, label, editable=false) {
+  const grid = document.getElementById(gridId);
+  const el = document.createElement(editable ? "input" : "div");
+  el.className = "cell " + cls;
+  el.dataset.id = id;
+  if (editable) {
+    el.type = "text";
+    el.addEventListener("change", recompute);
+    el.addEventListener("blur",   recompute);
+    el.addEventListener("click", (e) => { e.stopPropagation(); onCellClick(id, e); });
+    el.addEventListener("focus", () => { onCellClick(id, {ctrlKey:false,metaKey:false}); });
+  } else {
+    el.addEventListener("click", (e) => { e.stopPropagation(); onCellClick(id, e); });
+  }
+  grid.appendChild(el);
+  cellMap.set(id, { id, el, cls, deps: [], editable, value: 0, label });
+}
+
+function setDeps(id, deps) { cell(id).deps = deps; }
+
+function setValue(id, v) {
+  const c = cell(id);
+  c.value = v;
+  if (c.editable) return; // 输入格保留用户文字
+  c.el.textContent = fmt(v);
+}
+
+// =============== 构造所有网格 ===============
+function buildGrids() {
+  // inputs
+  for (const [gid, cls, label] of [["mat-q","q","Q"],["mat-k","k","K"],["mat-v","v","V"]]) {
+    document.getElementById(gid).style.gridTemplateColumns = `repeat(${N}, 52px)`;
+    for (let i=0;i<N;i++) for (let j=0;j<N;j++)
+      mkCell(gid, `${cls}-${i}-${j}`, cls, `${label}[${i},${j}]`, true);
+  }
+  // standard attention
+  document.getElementById("mat-qkt").style.gridTemplateColumns = `repeat(${N}, 52px)`;
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++)
+    mkCell("mat-qkt", `qkt-${i}-${j}`, "qkt", `(Q·Kᵀ)[${i},${j}]`);
+
+  document.getElementById("mat-sm").style.gridTemplateColumns = `repeat(${N}, 52px)`;
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++)
+    mkCell("mat-sm", `sm-${i}-${j}`, "sm", `softmax[${i},${j}]`);
+
+  document.getElementById("mat-out").style.gridTemplateColumns = `repeat(${N}, 52px)`;
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++)
+    mkCell("mat-out", `out-${i}-${j}`, "out", `Out[${i},${j}]`);
+
+  // flash block 1
+  document.getElementById("mat-fqkt").style.gridTemplateColumns = `repeat(${FB}, 52px)`;
+  for (let i=0;i<FB;i++) for (let j=0;j<FB;j++)
+    mkCell("mat-fqkt", `fqkt-${i}-${j}`, "qkt", `(Q₁·K₁ᵀ)[${i},${j}]`);
+
+  document.getElementById("mat-fm").style.gridTemplateColumns = `52px`;
+  for (let i=0;i<FB;i++) mkCell("mat-fm", `fm-${i}`, "scalar", `m⁽¹⁾[${i}]`);
+
+  document.getElementById("mat-fl").style.gridTemplateColumns = `52px`;
+  for (let i=0;i<FB;i++) mkCell("mat-fl", `fl-${i}`, "scalar", `l⁽¹⁾[${i}]`);
+
+  document.getElementById("mat-fsm").style.gridTemplateColumns = `repeat(${FB}, 52px)`;
+  for (let i=0;i<FB;i++) for (let j=0;j<FB;j++)
+    mkCell("mat-fsm", `fsm-${i}-${j}`, "sm", `sm₁[${i},${j}]`);
+
+  document.getElementById("mat-fout").style.gridTemplateColumns = `repeat(${N}, 52px)`;
+  for (let i=0;i<FB;i++) for (let j=0;j<N;j++)
+    mkCell("mat-fout", `fout-${i}-${j}`, "out", `O₁⁽¹⁾[${i},${j}]`);
+
+  // flash block 2
+  document.getElementById("mat-fqkt2").style.gridTemplateColumns = `repeat(${FB}, 52px)`;
+  for (let i=0;i<FB;i++) for (let j=0;j<FB;j++)
+    mkCell("mat-fqkt2", `fqkt2-${i}-${j}`, "qkt", `(Q₁·K₂ᵀ)[${i},${j}]`);
+
+  document.getElementById("mat-fm2").style.gridTemplateColumns = `52px`;
+  for (let i=0;i<FB;i++) mkCell("mat-fm2", `fm2-${i}`, "scalar", `m⁽²⁾[${i}]`);
+
+  document.getElementById("mat-fl2").style.gridTemplateColumns = `52px`;
+  for (let i=0;i<FB;i++) mkCell("mat-fl2", `fl2-${i}`, "scalar", `l⁽²⁾[${i}]`);
+
+  document.getElementById("mat-fp2").style.gridTemplateColumns = `repeat(${FB}, 52px)`;
+  for (let i=0;i<FB;i++) for (let j=0;j<FB;j++)
+    mkCell("mat-fp2", `fp2-${i}-${j}`, "sm", `P̃₂[${i},${j}]`);
+
+  document.getElementById("mat-fout2").style.gridTemplateColumns = `repeat(${N}, 52px)`;
+  for (let i=0;i<FB;i++) for (let j=0;j<N;j++)
+    mkCell("mat-fout2", `fout2-${i}-${j}`, "out", `O₁_final[${i},${j}]`);
+}
+
+// =============== 计算 + 依赖 ===============
+function recompute() {
+  // 读入 Q/K/V
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++) {
+    Q[i][j] = parseFloat(cell(`q-${i}-${j}`).el.value) || 0;
+    K[i][j] = parseFloat(cell(`k-${i}-${j}`).el.value) || 0;
+    V[i][j] = parseFloat(cell(`v-${i}-${j}`).el.value) || 0;
+    cell(`q-${i}-${j}`).value = Q[i][j]; setDeps(`q-${i}-${j}`, []);
+    cell(`k-${i}-${j}`).value = K[i][j]; setDeps(`k-${i}-${j}`, []);
+    cell(`v-${i}-${j}`).value = V[i][j]; setDeps(`v-${i}-${j}`, []);
+  }
+
+  // Q·Kᵀ : (i,j) = Σk Q[i,k]*K[j,k]
+  const QKT = [];
+  for (let i=0;i<N;i++) {
+    QKT[i] = [];
+    for (let j=0;j<N;j++) {
+      let s=0; const deps=[];
+      for (let k=0;k<N;k++) { s += Q[i][k]*K[j][k]; deps.push(`q-${i}-${k}`, `k-${j}-${k}`); }
+      QKT[i][j] = s;
+      setValue(`qkt-${i}-${j}`, s);
+      setDeps(`qkt-${i}-${j}`, deps);
+    }
+  }
+
+  // softmax(QKᵀ) 按行
+  const SM = [];
+  for (let i=0;i<N;i++) {
+    SM[i] = [];
+    const m = Math.max(...QKT[i]);
+    const exps = QKT[i].map(x => Math.exp(x - m));
+    const l = exps.reduce((a,b)=>a+b, 0);
+    const rowDeps = [];
+    for (let j=0;j<N;j++) rowDeps.push(`qkt-${i}-${j}`);
+    for (let j=0;j<N;j++) {
+      SM[i][j] = exps[j] / l;
+      setValue(`sm-${i}-${j}`, SM[i][j]);
+      setDeps(`sm-${i}-${j}`, rowDeps);
+    }
+  }
+
+  // OUT = SM · V
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++) {
+    let s=0; const deps=[];
+    for (let k=0;k<N;k++) { s += SM[i][k]*V[k][j]; deps.push(`sm-${i}-${k}`, `v-${k}-${j}`); }
+    setValue(`out-${i}-${j}`, s);
+    setDeps(`out-${i}-${j}`, deps);
+  }
+
+  // === FlashAttention block 1 (前 2 行 × 前 2 行) ===
+  // Q₁·K₁ᵀ : 2×2
+  const FQKT = [];
+  for (let i=0;i<FB;i++) {
+    FQKT[i] = [];
+    for (let j=0;j<FB;j++) {
+      let s=0; const deps=[];
+      for (let k=0;k<N;k++) { s += Q[i][k]*K[j][k]; deps.push(`q-${i}-${k}`, `k-${j}-${k}`); }
+      FQKT[i][j] = s;
+      setValue(`fqkt-${i}-${j}`, s);
+      setDeps(`fqkt-${i}-${j}`, deps);
+    }
+  }
+  // m⁽¹⁾ 每行
+  const FM = [];
+  for (let i=0;i<FB;i++) {
+    FM[i] = Math.max(...FQKT[i]);
+    setValue(`fm-${i}`, FM[i]);
+    const rowDeps = []; for (let j=0;j<FB;j++) rowDeps.push(`fqkt-${i}-${j}`);
+    setDeps(`fm-${i}`, rowDeps);
+  }
+  // l⁽¹⁾ 每行（依赖 fqkt 行 + m）
+  const FL = [];
+  const FSMRAW = [];
+  for (let i=0;i<FB;i++) {
+    FSMRAW[i] = [];
+    const rowDeps = [];
+    for (let j=0;j<FB;j++) {
+      rowDeps.push(`fqkt-${i}-${j}`);
+      FSMRAW[i][j] = Math.exp(FQKT[i][j] - FM[i]);
+    }
+    FL[i] = FSMRAW[i].reduce((a,b)=>a+b, 0);
+    setValue(`fl-${i}`, FL[i]);
+    setDeps(`fl-${i}`, [...rowDeps, `fm-${i}`]);
+  }
+  // 局部 softmax
+  const FSM = [];
+  for (let i=0;i<FB;i++) {
+    FSM[i] = [];
+    for (let j=0;j<FB;j++) {
+      FSM[i][j] = FSMRAW[i][j] / FL[i];
+      setValue(`fsm-${i}-${j}`, FSM[i][j]);
+      setDeps(`fsm-${i}-${j}`, [`fqkt-${i}-${j}`, `fm-${i}`, `fl-${i}`]);
+    }
+  }
+  // O₁⁽¹⁾ = FSM · V₁
+  for (let i=0;i<FB;i++) for (let j=0;j<N;j++) {
+    let s=0; const deps=[];
+    for (let k=0;k<FB;k++) { s += FSM[i][k]*V[k][j]; deps.push(`fsm-${i}-${k}`, `v-${k}-${j}`); }
+    setValue(`fout-${i}-${j}`, s);
+    setDeps(`fout-${i}-${j}`, deps);
+  }
+
+  // === FlashAttention block 2 (Q 前 2 行 × K/V 后 2 行) ===
+  // Q₁·K₂ᵀ : 2×2 (Q rows 0-1, K rows 2-3)
+  const FQKT2 = [];
+  for (let i=0;i<FB;i++) {
+    FQKT2[i] = [];
+    for (let j=0;j<FB;j++) {
+      let s=0; const deps=[];
+      for (let k=0;k<N;k++) { s += Q[i][k]*K[j+FB][k]; deps.push(`q-${i}-${k}`, `k-${j+FB}-${k}`); }
+      FQKT2[i][j] = s;
+      setValue(`fqkt2-${i}-${j}`, s);
+      setDeps(`fqkt2-${i}-${j}`, deps);
+    }
+  }
+  // m⁽²⁾ = max(m⁽¹⁾, rowmax(S₂))
+  const FM2 = [];
+  for (let i=0;i<FB;i++) {
+    FM2[i] = Math.max(FM[i], ...FQKT2[i]);
+    setValue(`fm2-${i}`, FM2[i]);
+    const rowDeps = [`fm-${i}`];
+    for (let j=0;j<FB;j++) rowDeps.push(`fqkt2-${i}-${j}`);
+    setDeps(`fm2-${i}`, rowDeps);
+  }
+  // l⁽²⁾ = exp(m⁽¹⁾ - m⁽²⁾) * l⁽¹⁾ + Σ exp(S₂ - m⁽²⁾)
+  const FL2 = [];
+  const FP2RAW = []; // P̃₂[i][j] = exp(S₂[i][j] - m⁽²⁾[i])
+  for (let i=0;i<FB;i++) {
+    FP2RAW[i] = [];
+    let sumExp = 0;
+    for (let j=0;j<FB;j++) {
+      FP2RAW[i][j] = Math.exp(FQKT2[i][j] - FM2[i]);
+      sumExp += FP2RAW[i][j];
+    }
+    FL2[i] = Math.exp(FM[i] - FM2[i]) * FL[i] + sumExp;
+    setValue(`fl2-${i}`, FL2[i]);
+    const deps = [`fm-${i}`, `fm2-${i}`, `fl-${i}`];
+    for (let j=0;j<FB;j++) deps.push(`fqkt2-${i}-${j}`);
+    setDeps(`fl2-${i}`, deps);
+  }
+  // P̃₂ 展示
+  for (let i=0;i<FB;i++) for (let j=0;j<FB;j++) {
+    setValue(`fp2-${i}-${j}`, FP2RAW[i][j]);
+    setDeps(`fp2-${i}-${j}`, [`fqkt2-${i}-${j}`, `fm2-${i}`]);
+  }
+  // O₁_final = (1/l⁽²⁾) * [ exp(m⁽¹⁾-m⁽²⁾)*l⁽¹⁾*O₁⁽¹⁾ + P̃₂·V₂ ]
+  for (let i=0;i<FB;i++) for (let j=0;j<N;j++) {
+    const alpha = Math.exp(FM[i] - FM2[i]) * FL[i]; // rescale factor for old O
+    const oldTerm = alpha * cell(`fout-${i}-${j}`).value;
+    let newTerm = 0;
+    const deps = [`fout-${i}-${j}`, `fm-${i}`, `fm2-${i}`, `fl-${i}`, `fl2-${i}`];
+    for (let k=0;k<FB;k++) {
+      newTerm += FP2RAW[i][k] * V[k+FB][j];
+      deps.push(`fp2-${i}-${k}`, `v-${k+FB}-${j}`);
+    }
+    const finalVal = (oldTerm + newTerm) / FL2[i];
+    setValue(`fout2-${i}-${j}`, finalVal);
+    setDeps(`fout2-${i}-${j}`, deps);
+  }
+}
+
+// =============== 高亮 ===============
+function clearHighlight() {
+  document.querySelectorAll(".cell").forEach(c => {
+    c.classList.remove("highlight-dep", "highlight-active");
+  });
+  document.getElementById("sel-info").innerHTML = `<span class="muted">未选中任何格子</span>`;
+}
+
+function highlightDepsRecursive(id, visited) {
+  if (visited.has(id)) return;
+  visited.add(id);
+  const c = cell(id);
+  if (!c) return;
+  c.el.classList.add("highlight-dep");
+  for (const d of c.deps) highlightDepsRecursive(d, visited);
+}
+
+const selectedIds = new Set();
+
+function onCellClick(id, ev) {
+  const multi = ev && (ev.ctrlKey || ev.metaKey || ev.shiftKey);
+  if (!multi) {
+    selectedIds.clear();
+    clearHighlight();
+  }
+  selectedIds.add(id);
+
+  // 每次重新渲染全部 selected
+  document.querySelectorAll(".cell").forEach(c => c.classList.remove("highlight-dep","highlight-active"));
+  const visited = new Set();
+  for (const sid of selectedIds) {
+    for (const d of cell(sid).deps) highlightDepsRecursive(d, visited);
+  }
+  for (const sid of selectedIds) {
+    cell(sid).el.classList.remove("highlight-dep");
+    cell(sid).el.classList.add("highlight-active");
+  }
+
+  // 更新信息栏
+  const info = document.getElementById("sel-info");
+  const parts = [];
+  for (const sid of selectedIds) {
+    const c = cell(sid);
+    parts.push(`${c.label} = ${fmt(c.value)}`);
+  }
+  info.innerHTML = parts.join(" &nbsp;|&nbsp; ") +
+    ` <span style="color:#94a3b8;margin-left:8px">（递归依赖 ${visited.size} 格）</span>`;
+}
+
+// =============== 重置 / 随机 / 写入 ===============
+function resetValues() {
+  Q = [[1,2,1,1],[2,2,1,1],[1,1,2,1],[1,2,1,1]];
+  K = [[1,1,1,1],[1,2,1,2],[1,1,1,1],[3,1,2,1]];
+  V = [[0.3,1,3,1],[1,2,1,2],[2,1,22,1],[1,5,1,1]];
+  writeInputs(); recompute();
+  clearHighlight(); selectedIds.clear();
+}
+
+function randomize() {
+  const rand = () => Math.round((Math.random()*2-0.3)*100)/100;
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++) {
+    Q[i][j] = rand(); K[i][j] = rand(); V[i][j] = rand();
+  }
+  writeInputs(); recompute();
+  clearHighlight(); selectedIds.clear();
+}
+
+function writeInputs() {
+  for (let i=0;i<N;i++) for (let j=0;j<N;j++) {
+    cell(`q-${i}-${j}`).el.value = Q[i][j];
+    cell(`k-${i}-${j}`).el.value = K[i][j];
+    cell(`v-${i}-${j}`).el.value = V[i][j];
+  }
+}
+
+// 点空白清除高亮
+document.body.addEventListener("click", () => {
+  selectedIds.clear();
+  clearHighlight();
+});
+
+// =============== 启动 ===============
+buildGrids();
+writeInputs();
+recompute();
+</script>
+</body>
+</html>

@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>FlashAttention 交互式原理解析</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #f3f4f6;
+    padding: 24px;
+    color: #1f2937;
+    min-height: 100vh;
+  }
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+  }
+  .title-section h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .step-desc {
+    font-size: 13px;
+    color: #6b7280;
+  }
+  .stats {
+    display: flex;
+    gap: 28px;
+  }
+  .stat-item {
+    text-align: center;
+  }
+  .stat-label {
+    font-size: 12px;
+    color: #9ca3af;
+    margin-bottom: 4px;
+  }
+  .stat-value {
+    font-size: 15px;
+    font-weight: 600;
+    color: #111827;
+  }
+  .stat-value.warn { color: #dc2626; }
+  .stat-value.good { color: #059669; }
+
+  /* Visualization Canvas */
+  .viz {
+    position: relative;
+    background: #f9fafb;
+    border-radius: 12px;
+    padding: 24px;
+    min-height: 520px;
+    margin-bottom: 20px;
+  }
+  .hbm-box {
+    position: relative;
+    border: 2px dashed #94a3b8;
+    border-radius: 12px;
+    padding: 20px 16px 16px;
+    background: #f1f5f9;
+  }
+  .hbm-label {
+    position: absolute;
+    top: -10px;
+    left: 16px;
+    background: #f9fafb;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #475569;
+    font-weight: 500;
+  }
+  .hbm-label::before {
+    content: "💾 ";
+  }
+
+  .matrices-row {
+    display: flex;
+    justify-content: space-around;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .matrix-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .matrix-title {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #334155;
+  }
+  .matrix {
+    display: grid;
+    gap: 2px;
+    padding: 4px;
+    background: #e2e8f0;
+    border-radius: 6px;
+  }
+  .matrix-4x4 { grid-template-columns: repeat(4, 28px); }
+  .matrix-2x2 { grid-template-columns: repeat(2, 28px); }
+  .matrix-2x4 { grid-template-columns: repeat(4, 28px); }
+  .matrix-4x2 { grid-template-columns: repeat(2, 28px); }
+  .cell {
+    width: 28px;
+    height: 28px;
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #334155;
+    border-radius: 2px;
+    transition: all 0.4s ease;
+  }
+  .cell.dimmed { opacity: 0.25; }
+  .cell.q { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }
+  .cell.k { background: #dcfce7; border-color: #86efac; color: #166534; }
+  .cell.v { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+  .cell.s { background: #fce7f3; border-color: #f9a8d4; color: #9d174d; }
+  .cell.p { background: #e9d5ff; border-color: #c4b5fd; color: #6b21a8; }
+  .cell.o { background: #fed7aa; border-color: #fb923c; color: #9a3412; }
+  .cell.active {
+    box-shadow: 0 0 0 2px #3b82f6, 0 0 12px rgba(59,130,246,0.5);
+    transform: scale(1.08);
+    z-index: 2;
+  }
+  .cell.flash-on {
+    background: #fee2e2;
+    border-color: #f87171;
+  }
+  .cell.writing {
+    animation: pulse 0.8s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.7); }
+    50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+  }
+
+  /* SRAM Overlay */
+  .sram-box {
+    margin-top: 20px;
+    border: 2px solid #3b82f6;
+    border-radius: 12px;
+    padding: 20px 16px 16px;
+    background: #eff6ff;
+    position: relative;
+    min-height: 120px;
+  }
+  .sram-label {
+    position: absolute;
+    top: -10px;
+    left: 16px;
+    background: #f9fafb;
+    padding: 0 8px;
+    font-size: 12px;
+    color: #1d4ed8;
+    font-weight: 500;
+  }
+  .sram-label::before { content: "⚡ "; }
+  .sram-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: stretch;
+    gap: 10px;
+    flex-wrap: wrap;
+    min-height: 80px;
+  }
+  .sram-evict-bar {
+    background: #fef2f2;
+    color: #991b1b;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    border: 1px dashed #fca5a5;
+    text-align: center;
+  }
+  .sram-slots-row {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    margin-left: 4px;
+    vertical-align: middle;
+    border: 1px solid transparent;
+  }
+  .badge-new { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .badge-keep { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+  .badge-reg { background: #e9d5ff; color: #6b21a8; border-color: #c4b5fd; }
+  .badge-out { background: #dcfce7; color: #166534; border-color: #86efac; }
+  .badge-evict { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+  .sram-empty {
+    color: #94a3b8;
+    font-size: 13px;
+    font-style: italic;
+  }
+  .sram-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    animation: fadein 0.4s ease;
+  }
+  @keyframes fadein {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .sram-slot .matrix-title {
+    font-size: 11px;
+    margin-bottom: 4px;
+  }
+  .state-panel {
+    background: #fff;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: #1e3a8a;
+    font-family: Menlo, Consolas, monospace;
+    line-height: 1.6;
+    min-width: 180px;
+  }
+  .state-panel div { margin: 2px 0; }
+  .formula {
+    background: #fff;
+    border: 1px dashed #cbd5e1;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: Menlo, Consolas, monospace;
+    color: #475569;
+    margin-top: 10px;
+    display: inline-block;
+  }
+  .formula.highlight {
+    background: #fef3c7;
+    border-color: #fbbf24;
+    color: #78350f;
+  }
+
+  /* Controls */
+  .controls {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .ctrl-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .ctrl-label {
+    font-size: 13px;
+    color: #6b7280;
+    min-width: 70px;
+  }
+  select, button {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  select { flex: 1; max-width: 260px; }
+  button { flex: 1; padding: 10px 16px; background: #f3f4f6; }
+  button:hover { background: #e5e7eb; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+  button.primary:hover { background: #2563eb; }
+  input[type=range] {
+    flex: 1;
+    accent-color: #3b82f6;
+  }
+  .step-num-box {
+    background: #f3f4f6;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    min-width: 60px;
+    text-align: center;
+  }
+  .btn-row {
+    display: flex;
+    gap: 10px;
+  }
+
+  .arrow {
+    font-size: 20px;
+    color: #3b82f6;
+    margin: 0 8px;
+    align-self: center;
+  }
+  .center-op {
+    display: flex;
+    justify-content: center;
+    margin-top: 16px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <div class="title-section">
+      <h1>FlashAttention 交互式原理解析</h1>
+      <p class="step-desc" id="step-desc">初始状态：Q, K, V 存储在 HBM 中</p>
+    </div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <div class="viz">
+    <div class="hbm-box">
+      <div class="hbm-label">HBM (高带宽显存 - 慢)</div>
+      <div class="matrices-row">
+        <div class="matrix-group">
+          <div class="matrix-title">Q (4×4)</div>
+          <div class="matrix matrix-4x4" id="mat-q"></div>
+        </div>
+        <div class="matrix-group">
+          <div class="matrix-title">Kᵀ (4×4)</div>
+          <div class="matrix matrix-4x4" id="mat-k"></div>
+        </div>
+        <div class="matrix-group">
+          <div class="matrix-title">V (4×4)</div>
+          <div class="matrix matrix-4x4" id="mat-v"></div>
+        </div>
+        <div class="matrix-group">
+          <div class="matrix-title">Output O (4×4)</div>
+          <div class="matrix matrix-4x4" id="mat-o"></div>
+        </div>
+      </div>
+      <div class="center-op" id="hbm-intermediate"></div>
+    </div>
+
+    <div class="sram-box" id="sram-box" style="display:none;">
+      <div class="sram-label">SRAM (片上缓存 - 快)</div>
+      <div class="sram-legend" style="text-align:center;font-size:11px;color:#64748b;margin-bottom:8px;">
+        <span class="badge badge-new">⚡ 新加载</span>
+        <span class="badge badge-keep">📌 驻留</span>
+        <span class="badge badge-reg">🔧 寄存器</span>
+        <span class="badge badge-out">📤 即将写回 HBM</span>
+      </div>
+      <div class="sram-content" id="sram-content">
+        <span class="sram-empty">— SRAM 为空 —</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="ctrl-row">
+      <span class="ctrl-label">计算模式</span>
+      <select id="mode">
+        <option value="standard">Standard Attention (HBM 全量物化)</option>
+        <option value="flash">FlashAttention (SRAM 分块)</option>
+      </select>
+    </div>
+    <div class="ctrl-row">
+      <span class="ctrl-label">当前步骤</span>
+      <input type="range" id="slider" min="0" max="7" value="0">
+      <span class="step-num-box" id="step-num">0 / 7</span>
+    </div>
+    <div class="btn-row">
+      <button id="prev">◀ 上一步</button>
+      <button id="next" class="primary">下一步 ▶</button>
+    </div>
+    <button id="reset" style="width:100%;">🔄 重置</button>
+  </div>
+</div>
+
+<script>
+// =================== 数据 ===================
+const Q = [[0.7,0.9,0.6,0.1],[0.6,0.1,0.5,0.6],[0.7,0.3,0.8,0.2],[0.5,0.1,0.7,0.3]];
+const K = [[0.7,0.3,0.4,1.0],[0.3,0.7,0.5,0.8],[0.4,0.6,0.3,0.7],[0.6,0.7,0.1,0.1]];
+const V = [[0.4,0.7,0.8,0.0],[0.9,0.6,0.9,0.5],[0.5,0.1,0.6,0.6],[0.7,0.3,0.8,0.6]];
+
+// 预计算 S, P, O (简单起见不除 sqrt(d))
+function matmul(A, Bt) {
+  const r = A.length, c = Bt.length, k = A[0].length;
+  const out = Array.from({length:r}, () => Array(c).fill(0));
+  for (let i = 0; i < r; i++)
+    for (let j = 0; j < c; j++)
+      for (let x = 0; x < k; x++)
+        out[i][j] += A[i][x] * Bt[j][x];
+  return out;
+}
+function softmaxRow(row) {
+  const m = Math.max(...row);
+  const e = row.map(v => Math.exp(v - m));
+  const s = e.reduce((a,b)=>a+b,0);
+  return e.map(v => v/s);
+}
+const S = matmul(Q, K); // 等价于 Q·Kᵀ 因为 K 已是原始矩阵
+const P = S.map(softmaxRow);
+const O = matmul(P, V.map((_,j)=>V.map(r=>r[j])).map((_,i)=>V[i]));
+// 直接 P*V 行向量求和
+function mulPV(P, V) {
+  const r = P.length, c = V[0].length;
+  const out = Array.from({length:r}, () => Array(c).fill(0));
+  for (let i = 0; i < r; i++)
+    for (let j = 0; j < c; j++)
+      for (let k = 0; k < V.length; k++)
+        out[i][j] += P[i][k] * V[k][j];
+  return out;
+}
+const O_true = mulPV(P, V);
+
+// =================== 渲染矩阵 ===================
+function renderMatrix(elId, data, cls, opts = {}) {
+  const el = document.getElementById(elId);
+  el.innerHTML = "";
+  const highlight = opts.highlight || []; // [[i,j], ...]
+  const dim = opts.dim || [];
+  const hidden = opts.hidden || false;
+  for (let i = 0; i < data.length; i++) {
+    for (let j = 0; j < data[0].length; j++) {
+      const c = document.createElement("div");
+      c.className = "cell " + cls;
+      c.textContent = hidden ? "·" : data[i][j].toFixed(1);
+      if (highlight.some(([x,y]) => x===i && y===j)) c.classList.add("active");
+      if (dim.some(([x,y]) => x===i && y===j)) c.classList.add("dimmed");
+      el.appendChild(c);
+    }
+  }
+}
+
+function submatrix(M, rows, cols) {
+  return rows.map(i => cols.map(j => M[i][j]));
+}
+
+function dot(a, b) {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+  return s;
+}
+
+function highlightRow(row) {
+  return [0,1,2,3].map(j => [row, j]);
+}
+
+function setHighlight(spec) {
+  ['q','k','v','o'].forEach(key => {
+    const coords = spec[key];
+    if (!coords) return;
+    const cells = document.querySelectorAll(`#mat-${key} .cell`);
+    coords.forEach(([i,j]) => {
+      const idx = i * 4 + j;
+      if (cells[idx]) cells[idx].classList.add("active");
+    });
+  });
+}
+
+// 模拟 online softmax，返回给定 Q 行经过前 numK 个 K/V 有效累积后的状态
+function onlineSoftmax(qRow, numK) {
+  let m = -Infinity, l = 0, O = [0,0,0,0];
+  let lastS = 0, lastAlpha = 0, lastP = 0, lastM = -Infinity;
+  for (let j = 0; j < numK; j++) {
+    const s = dot(qRow, K[j]);
+    const m_new = Math.max(m, s);
+    const alpha = (m === -Infinity) ? 0 : Math.exp(m - m_new);
+    const p = Math.exp(s - m_new);
+    const l_new = alpha * l + p;
+    const O_new = O.map((o, i) => o * alpha + p * V[j][i]);
+    lastS = s; lastAlpha = alpha; lastP = p; lastM = m;
+    m = m_new; l = l_new; O = O_new;
+  }
+  return { m, l, O, lastS, lastAlpha, lastP, lastM };
+}
+
+// =================== 步骤定义 ===================
+const stdSteps = [
+  {
+    desc: "初始状态：Q、K、V 存储在 HBM 中，Output O 尚未计算",
+    run: () => {
+      renderO({ show: false });
+      setIntermediate("");
+    }
+  },
+  {
+    desc: "步骤 1/6：从 HBM 读取完整的 Q 和 K（4×4 × 2 = 32 次读）",
+    run: () => {
+      highlightAll("mat-q");
+      highlightAll("mat-k");
+      setIntermediate(`<div class="formula highlight">读取 Q, K → 准备算 S = Q·Kᵀ</div>`);
+    }
+  },
+  {
+    desc: "步骤 2/6：计算完整 S = Q·Kᵀ（4×4 = 16 个点积全部算出）",
+    run: () => {
+      setIntermediate(`
+        <div class="matrix-group">
+          <div class="matrix-title">S = Q·Kᵀ (4×4 中间矩阵)</div>
+          <div class="matrix matrix-4x4" id="mat-s"></div>
+        </div>
+      `);
+      renderMatrix("mat-s", S, "s");
+    }
+  },
+  {
+    desc: "步骤 3/6：将 4×4 的 S 矩阵完整写回 HBM（16 次写 ❌ IO 浪费）",
+    run: () => {
+      setIntermediate(`
+        <div class="matrix-group">
+          <div class="matrix-title">S → 写回 HBM (4×4)</div>
+          <div class="matrix matrix-4x4" id="mat-s"></div>
+        </div>
+        <div class="formula highlight">⚠️ 中间矩阵 S 物化到 HBM，大小 O(N²)</div>
+      `);
+      renderMatrix("mat-s", S, "s");
+      document.querySelectorAll("#mat-s .cell").forEach(c => c.classList.add("writing"));
+    }
+  },
+  {
+    desc: "步骤 4/6：从 HBM 再读 S → 按行做 softmax → 得到 P（16 读 + 16 写）",
+    run: () => {
+      setIntermediate(`
+        <div class="matrix-group">
+          <div class="matrix-title">S (读 HBM)</div>
+          <div class="matrix matrix-4x4" id="mat-s"></div>
+        </div>
+        <div class="arrow">→ softmax →</div>
+        <div class="matrix-group">
+          <div class="matrix-title">P = softmax(S)</div>
+          <div class="matrix matrix-4x4" id="mat-p"></div>
+        </div>
+      `);
+      renderMatrix("mat-s", S, "s");
+      renderMatrix("mat-p", P, "p");
+      document.querySelectorAll("#mat-p .cell").forEach(c => c.classList.add("writing"));
+    }
+  },
+  {
+    desc: "步骤 5/6：从 HBM 读取 P 和 V，计算 O = P·V（再一次完整读写）",
+    run: () => {
+      setIntermediate(`
+        <div class="matrix-group">
+          <div class="matrix-title">P (读 HBM)</div>
+          <div class="matrix matrix-4x4" id="mat-p"></div>
+        </div>
+        <div class="arrow">× V →</div>
+        <div class="formula highlight">O = P · V</div>
+      `);
+      renderMatrix("mat-p", P, "p");
+      highlightAll("mat-v");
+    }
+  },
+  {
+    desc: "步骤 6/6：最终 O 写回 HBM ✅ 完成（但整个过程 S、P 都被完整物化，HBM 流量巨大）",
+    run: () => {
+      renderO({ show: true });
+      document.querySelectorAll("#mat-o .cell").forEach(c => c.classList.add("writing"));
+      setIntermediate(`<div class="formula highlight">❌ 总 HBM 读写 ≈ 6·N² = 96 次，中间矩阵 S、P 各物化一次</div>`);
+    }
+  }
+];
+
+const flashSteps = [
+  {
+    desc: "初始状态：Q、K、V 存储在 HBM。以 1 行为块，共 4 个 Q 块、 4 个 K/V 块。外层循环遍历 Q[0..3]，内层循环遍历 K/V[0..3]",
+    run: () => {
+      setSRAM([]);
+      renderO({ show: false });
+      setIntermediate("");
+    }
+  },
+  // ========== 外层 1: Q[0] ==========
+  {
+    desc: "外层 ① 开始 — 从 HBM 加载 Q[0] 进 SRAM；同时在寄存器初始化 m=-∞、l=0、O=0。Q[0] 在整个外层迭代中驻留",
+    run: () => {
+      setSRAM([
+        { title: "Q[0]", data: [Q[0]], cls: "q", tag: "new" },
+        { title: "标量 (m, l)", tag: "reg", state: "m = -∞\nl = 0" },
+        { title: "O (累加器)", data: [[0,0,0,0]], cls: "o", tag: "reg" }
+      ]);
+      setHighlight({ q: highlightRow(0) });
+      setIntermediate(`<div class="formula">当前外层处理 Q[0]（第 0 行）</div>`);
+    }
+  },
+  {
+    desc: "内层 ①/④ — 从 HBM 加载 K[0]、V[0] 进 SRAM；在 SRAM 内算 s₀₀ = Q[0]·K[0]ᵀ；初始化累积 m←s, l←1, O←V[0]",
+    run: () => {
+      const st = onlineSoftmax(Q[0], 1);
+      const Oshow = st.O.map(v => parseFloat(v.toFixed(2)));
+      setSRAM([
+        { title: "Q[0]", data: [Q[0]], cls: "q", tag: "keep" },
+        { title: "K[0]", data: [K[0]], cls: "k", tag: "new" },
+        { title: "V[0]", data: [V[0]], cls: "v", tag: "new" },
+        { title: "标量", tag: "reg", state: `(本步瞬时) s₀₀ = ${st.lastS.toFixed(2)}\n─── 驻留 ───\nm = ${st.m.toFixed(2)}\nl = ${st.l.toFixed(2)}` },
+        { title: "O (累加器)", data: [Oshow], cls: "o", tag: "keep" }
+      ]);
+      setHighlight({ q: highlightRow(0), k: highlightRow(0), v: highlightRow(0) });
+      setIntermediate(`<div class="formula highlight">s₀₀ 只停在寄存器，不写回 HBM</div>`);
+    }
+  },
+  {
+    desc: "内层 ②/④ — 淘汰 K[0]、V[0]；加载 K[1]、V[1]；算 s₀₁；用修正因子 α = exp(m_old−m_new) 把旧 O 缩放再累加新值",
+    run: () => {
+      const st = onlineSoftmax(Q[0], 2);
+      const Oshow = st.O.map(v => parseFloat(v.toFixed(2)));
+      setSRAM([
+        { title: "Q[0]", data: [Q[0]], cls: "q", tag: "keep" },
+        { title: "K[1]", data: [K[1]], cls: "k", tag: "new" },
+        { title: "V[1]", data: [V[1]], cls: "v", tag: "new" },
+        { title: "标量", tag: "reg", state: `(本步瞬时) s₀₁ = ${st.lastS.toFixed(2)}, α = exp(${st.lastM.toFixed(2)}−${st.m.toFixed(2)}) = ${st.lastAlpha.toFixed(2)}\n─── 驻留 ───\nm = ${st.m.toFixed(2)}\nl = ${st.l.toFixed(2)}` },
+        { title: "O (累加器)", data: [Oshow], cls: "o", tag: "keep" }
+      ], ["K[0]", "V[0]"]);
+      setHighlight({ q: highlightRow(0), k: highlightRow(1), v: highlightRow(1) });
+      setIntermediate(`<div class="formula highlight">🔑 α·O_old + p·V[1] 等价于用新 m 重算旧累积</div>`);
+    }
+  },
+  {
+    desc: "内层 ③/④ — 淘汰 K[1]、V[1]；加载 K[2]、V[2]；算 s₀₂；同样用 α 修正后累加",
+    run: () => {
+      const st = onlineSoftmax(Q[0], 3);
+      const Oshow = st.O.map(v => parseFloat(v.toFixed(2)));
+      setSRAM([
+        { title: "Q[0]", data: [Q[0]], cls: "q", tag: "keep" },
+        { title: "K[2]", data: [K[2]], cls: "k", tag: "new" },
+        { title: "V[2]", data: [V[2]], cls: "v", tag: "new" },
+        { title: "标量", tag: "reg", state: `(本步瞬时) s₀₂ = ${st.lastS.toFixed(2)}, α = ${st.lastAlpha.toFixed(2)}\n─── 驻留 ───\nm = ${st.m.toFixed(2)}\nl = ${st.l.toFixed(2)}` },
+        { title: "O (累加器)", data: [Oshow], cls: "o", tag: "keep" }
+      ], ["K[1]", "V[1]"]);
+      setHighlight({ q: highlightRow(0), k: highlightRow(2), v: highlightRow(2) });
+      setIntermediate("");
+    }
+  },
+  {
+    desc: "内层 ④/④ — 淘汰 K[2]、V[2]；加载 K[3]、V[3]；算 s₀₃；最后一次修正累加",
+    run: () => {
+      const st = onlineSoftmax(Q[0], 4);
+      const Oshow = st.O.map(v => parseFloat(v.toFixed(2)));
+      setSRAM([
+        { title: "Q[0]", data: [Q[0]], cls: "q", tag: "keep" },
+        { title: "K[3]", data: [K[3]], cls: "k", tag: "new" },
+        { title: "V[3]", data: [V[3]], cls: "v", tag: "new" },
+        { title: "标量", tag: "reg", state: `(本步瞬时) s₀₃ = ${st.lastS.toFixed(2)}, α = ${st.lastAlpha.toFixed(2)}\n─── 驻留 ───\nm = ${st.m.toFixed(2)}\nl = ${st.l.toFixed(2)}` },
+        { title: "O (累加器)", data: [Oshow], cls: "o", tag: "keep" }
+      ], ["K[2]", "V[2]"]);
+      setHighlight({ q: highlightRow(0), k: highlightRow(3), v: highlightRow(3) });
+      setIntermediate("");
+    }
+  },
+  {
+    desc: "Q[0] 内层结束 — 淘汰 K[3]、V[3]；归一化 O[0] = O / l；把 1×4 的 O[0] 写回 HBM",
+    run: () => {
+      const st = onlineSoftmax(Q[0], 4);
+      const final = st.O.map(v => v / st.l);
+      const finalShow = final.map(v => parseFloat(v.toFixed(2)));
+      setSRAM([
+        { title: "Q[0]", data: [Q[0]], cls: "q", tag: "keep" },
+        { title: "标量", tag: "reg", state: `m = ${st.m.toFixed(2)}\nl = ${st.l.toFixed(2)}\n归一化: O / l` },
+        { title: "O[0] (即将写回)", data: [finalShow], cls: "o", tag: "out" }
+      ], ["K[3]", "V[3]"]);
+      renderO({ show: true, onlyRows: [0] });
+      setHighlight({ q: highlightRow(0), o: highlightRow(0) });
+      setIntermediate(`<div class="formula">中间标量 s₀₀..s₀₃ 全程都没去过 HBM</div>`);
+      const oCells = document.querySelectorAll("#mat-o .cell");
+      for (let i = 0; i < 4; i++) oCells[i] && oCells[i].classList.add("writing");
+    }
+  },
+  // ========== 外层 2: Q[1] ==========
+  {
+    desc: "外层 ② — 淘汰 Q[0]（O[0] 已入 HBM）；加载 Q[1] 进 SRAM；重置寄存器；重复 4 次“换入 K[j]V[j] → 算 → 修正累加”（合并展示）后写回 O[1]",
+    run: () => {
+      const st = onlineSoftmax(Q[1], 4);
+      const final = st.O.map(v => v / st.l);
+      const finalShow = final.map(v => parseFloat(v.toFixed(2)));
+      setSRAM([
+        { title: "Q[1]", data: [Q[1]], cls: "q", tag: "new" },
+        { title: "标量 (4 次迭代后)", tag: "reg", state: `m = ${st.m.toFixed(2)}\nl = ${st.l.toFixed(2)}\n\n内层依次换入换出：\nK[0]V[0] → K[1]V[1]\n  → K[2]V[2] → K[3]V[3]` },
+        { title: "O[1] (即将写回)", data: [finalShow], cls: "o", tag: "out" }
+      ], ["Q[0]"]);
+      renderO({ show: true, onlyRows: [0,1] });
+      setHighlight({ q: highlightRow(1), o: highlightRow(1) });
+      const oCells = document.querySelectorAll("#mat-o .cell");
+      for (let i = 4; i < 8; i++) oCells[i] && oCells[i].classList.add("writing");
+    }
+  },
+  // ========== 外层 3: Q[2] ==========
+  {
+    desc: "外层 ③ — 淘汰 Q[1]（O[1] 已入 HBM）；加载 Q[2]；同样 4 次内层迭代后写回 O[2]",
+    run: () => {
+      const st = onlineSoftmax(Q[2], 4);
+      const final = st.O.map(v => v / st.l);
+      const finalShow = final.map(v => parseFloat(v.toFixed(2)));
+      setSRAM([
+        { title: "Q[2]", data: [Q[2]], cls: "q", tag: "new" },
+        { title: "标量 (4 次迭代后)", tag: "reg", state: `m = ${st.m.toFixed(2)}\nl = ${st.l.toFixed(2)}` },
+        { title: "O[2] (即将写回)", data: [finalShow], cls: "o", tag: "out" }
+      ], ["Q[1]"]);
+      renderO({ show: true, onlyRows: [0,1,2] });
+      setHighlight({ q: highlightRow(2), o: highlightRow(2) });
+      const oCells = document.querySelectorAll("#mat-o .cell");
+      for (let i = 8; i < 12; i++) oCells[i] && oCells[i].classList.add("writing");
+    }
+  },
+  // ========== 外层 4: Q[3] ==========
+  {
+    desc: "外层 ④ — 淘汰 Q[2]（O[2] 已入 HBM）；加载 Q[3]；同样 4 次内层迭代后写回 O[3]",
+    run: () => {
+      const st = onlineSoftmax(Q[3], 4);
+      const final = st.O.map(v => v / st.l);
+      const finalShow = final.map(v => parseFloat(v.toFixed(2)));
+      setSRAM([
+        { title: "Q[3]", data: [Q[3]], cls: "q", tag: "new" },
+        { title: "标量 (4 次迭代后)", tag: "reg", state: `m = ${st.m.toFixed(2)}\nl = ${st.l.toFixed(2)}` },
+        { title: "O[3] (即将写回)", data: [finalShow], cls: "o", tag: "out" }
+      ], ["Q[2]"]);
+      renderO({ show: true });
+      setHighlight({ q: highlightRow(3), o: highlightRow(3) });
+      const oCells = document.querySelectorAll("#mat-o .cell");
+      for (let i = 12; i < 16; i++) oCells[i] && oCells[i].classList.add("writing");
+    }
+  },
+  {
+    desc: "完成 — 淘汰 Q[3]；SRAM 清空。全程中间矩阵 S、P 未在 HBM 物化，只进过 SRAM 就消失了",
+    run: () => {
+      setSRAM([], ["Q[3]"]);
+      renderO({ show: true });
+      setIntermediate(`<div class="formula highlight">✅ 总 HBM 读写 ≈ 3·N·d（只读写 Q、K、V、O）<br/>FLOPs 略增（修正因子）但 HBM IO 大幅降低 → 2~4x 加速</div>`);
+    }
+  }
+];
+
+// =================== 渲染辅助 ===================
+function highlightAll(id) {
+  document.querySelectorAll(`#${id} .cell`).forEach(c => c.classList.add("active"));
+}
+function dimMatrix(id, coords) {
+  const cells = document.querySelectorAll(`#${id} .cell`);
+  cells.forEach(c => c.classList.remove("dimmed"));
+  coords.forEach(([i,j]) => {
+    const idx = i * 4 + j;
+    if (cells[idx]) cells[idx].classList.add("dimmed");
+  });
+}
+function renderO({ show, onlyRows }) {
+  const data = show ? O_true : [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+  renderMatrix("mat-o", data, "o", {
+    hidden: !show,
+    dim: onlyRows ? [0,1,2,3].filter(i => !onlyRows.includes(i)).flatMap(i => [[i,0],[i,1],[i,2],[i,3]]) : []
+  });
+}
+function setSRAM(slots, evicted) {
+  const box = document.getElementById("sram-box");
+  const content = document.getElementById("sram-content");
+  box.style.display = mode === "flash" ? "block" : "none";
+  content.innerHTML = "";
+
+  // 淘汰提示栏
+  if (evicted && evicted.length > 0) {
+    const bar = document.createElement("div");
+    bar.className = "sram-evict-bar";
+    bar.innerHTML = `❌ 本步淘汰出 SRAM：<b>${evicted.join("、")}</b>`;
+    content.appendChild(bar);
+  }
+
+  if (!slots || slots.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "sram-empty";
+    empty.textContent = "— SRAM 为空 —";
+    content.appendChild(empty);
+    return;
+  }
+
+  const row = document.createElement("div");
+  row.className = "sram-slots-row";
+  content.appendChild(row);
+  slots.forEach((s, idx) => {
+    const el = document.createElement("div");
+    el.className = "sram-slot";
+    // 徽章
+    let badge = "";
+    if (s.tag === "new")      badge = `<span class="badge badge-new">⚡ 新加载</span>`;
+    else if (s.tag === "keep") badge = `<span class="badge badge-keep">📌 驻留</span>`;
+    else if (s.tag === "reg")  badge = `<span class="badge badge-reg">🔧 寄存器</span>`;
+    else if (s.tag === "out")  badge = `<span class="badge badge-out">📤 即将写回 HBM</span>`;
+
+    if (s.state) {
+      el.innerHTML = `<div class="matrix-title">${s.title} ${badge}</div><div class="state-panel">${s.state.replace(/\n/g,"<br/>")}</div>`;
+      row.appendChild(el);
+    } else {
+      const matId = `sram-mat-${idx}`;
+      el.innerHTML = `<div class="matrix-title">${s.title} ${badge}</div><div class="matrix" id="${matId}" style="grid-template-columns: repeat(${s.data[0].length}, 28px);"></div>`;
+      row.appendChild(el);
+      renderMatrix(matId, s.data, s.cls);
+    }
+  });
+}
+function setIntermediate(html) {
+  document.getElementById("hbm-intermediate").innerHTML = html;
+}
+
+// =================== 状态栏 ===================
+function updateStats() {
+  const el = document.getElementById("stats");
+  if (mode === "standard") {
+    el.innerHTML = `
+      <div class="stat-item"><div class="stat-label">中间矩阵</div><div class="stat-value warn">S、P 物化</div></div>
+      <div class="stat-item"><div class="stat-label">HBM 流量</div><div class="stat-value warn">O(N²)</div></div>
+      <div class="stat-item"><div class="stat-label">IO 优化</div><div class="stat-value warn">无</div></div>
+    `;
+  } else {
+    el.innerHTML = `
+      <div class="stat-item"><div class="stat-label">当前 Block</div><div class="stat-value" id="stat-block">初始化</div></div>
+      <div class="stat-item"><div class="stat-label">中间矩阵</div><div class="stat-value good">仅在 SRAM</div></div>
+      <div class="stat-item"><div class="stat-label">HBM 流量</div><div class="stat-value good">O(N·d)</div></div>
+    `;
+  }
+}
+
+// =================== 主逻辑 ===================
+let mode = "standard";
+let step = 0;
+
+function currentSteps() {
+  return mode === "standard" ? stdSteps : flashSteps;
+}
+
+function render() {
+  // 重绘基础矩阵
+  renderMatrix("mat-q", Q, "q");
+  renderMatrix("mat-k", K, "k");
+  renderMatrix("mat-v", V, "v");
+  renderO({ show: step === currentSteps().length - 1 });
+
+  const steps = currentSteps();
+  const cur = steps[step];
+  document.getElementById("step-desc").textContent = cur.desc;
+  document.getElementById("step-num").textContent = `${step} / ${steps.length - 1}`;
+  document.getElementById("slider").max = steps.length - 1;
+  document.getElementById("slider").value = step;
+  cur.run();
+
+  document.getElementById("prev").disabled = step === 0;
+  document.getElementById("next").disabled = step === steps.length - 1;
+
+  if (mode === "flash") {
+    const blockEl = document.getElementById("stat-block");
+    if (blockEl) {
+      if (step === 0) blockEl.textContent = "初始化";
+      else if (step <= 6) blockEl.textContent = "Q[0] (Row 0)";
+      else if (step === 7) blockEl.textContent = "Q[1] (Row 1)";
+      else if (step === 8) blockEl.textContent = "Q[2] (Row 2)";
+      else if (step === 9) blockEl.textContent = "Q[3] (Row 3)";
+      else blockEl.textContent = "完成";
+    }
+  }
+}
+
+// 初始化事件
+document.getElementById("mode").addEventListener("change", e => {
+  mode = e.target.value;
+  step = 0;
+  updateStats();
+  document.getElementById("sram-box").style.display = mode === "flash" ? "block" : "none";
+  render();
+});
+document.getElementById("prev").addEventListener("click", () => {
+  if (step > 0) { step--; render(); }
+});
+document.getElementById("next").addEventListener("click", () => {
+  if (step < currentSteps().length - 1) { step++; render(); }
+});
+document.getElementById("reset").addEventListener("click", () => {
+  step = 0; render();
+});
+document.getElementById("slider").addEventListener("input", e => {
+  step = parseInt(e.target.value);
+  render();
+});
+
+updateStats();
+render();
+</script>
+</body>
+</html>
