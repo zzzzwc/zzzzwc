@@ -1,4 +1,10 @@
-### Hi there 👋
-[![zzzzwc's GitHub stats](https://github-readme-stats.vercel.app/api?username=zzzzwc&count_private=true)](https://github.com/zzzzwc)
+# Hi 👋, I'm zzzzwc
 
-[![Top Langs](https://github-readme-stats.vercel.app/api/top-langs/?username=zzzzwc)](https://github.com/anuraghazra/github-readme-stats)
+- 🔭 I'm currently working on **data@xpeng.com**
+
+- 🌱 I'm currently learning **LLM Inference Acceleration**
+
+<h3 align="left">Languages and Tools:</h3>
+
+
+![c](https://skillicons.dev/icons?i=c) ![go](https://skillicons.dev/icons?i=go) ![postgresql](https://skillicons.dev/icons?i=postgres)  
